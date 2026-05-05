@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import express from "express";
 
@@ -8,11 +8,8 @@ const { BOT_TOKEN, CHAT_ID, PORT = "8080" } = process.env;
 const app = express();
 app.use(express.json());
 
-const transports = new Map();
-
-app.get("/sse", async (req, res) => {
+function createServer() {
   const server = new McpServer({ name: "telegram-sender", version: "1.0.0" });
-
   server.tool(
     "send_message",
     { text: z.string().describe("HTML-formatted message to send via Telegram") },
@@ -26,17 +23,15 @@ app.get("/sse", async (req, res) => {
       return { content: [{ type: "text", text: JSON.stringify(data) }] };
     }
   );
+  return server;
+}
 
-  const transport = new SSEServerTransport("/messages", res);
-  transports.set(transport.sessionId, transport);
-  res.on("close", () => transports.delete(transport.sessionId));
+app.post("/mcp", async (req, res) => {
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  const server = createServer();
   await server.connect(transport);
-});
-
-app.post("/messages", async (req, res) => {
-  const transport = transports.get(req.query.sessionId);
-  if (!transport) return res.status(404).send("Session not found");
-  await transport.handlePostMessage(req, res);
+  await transport.handleRequest(req, res, req.body);
+  await server.close();
 });
 
 app.get("/health", (_req, res) => res.send("OK"));
