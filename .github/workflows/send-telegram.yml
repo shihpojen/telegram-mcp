@@ -3,16 +3,8 @@ name: Send Telegram Briefing
 on:
   workflow_dispatch:
     inputs:
-      message1:
-        description: Message 1 (TSLA)
-        required: true
-        type: string
-      message2:
-        description: Message 2 (News)
-        required: true
-        type: string
-      message3:
-        description: Message 3 (AI Lesson)
+      message:
+        description: Full briefing message
         required: true
         type: string
 
@@ -22,6 +14,4 @@ jobs:
     steps:
       - name: Send to Telegram
         run: |
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage"             --data-urlencode "chat_id=${{ secrets.CHAT_ID }}"             --data-urlencode "text=${{ github.event.inputs.message1 }}"
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage"             --data-urlencode "chat_id=${{ secrets.CHAT_ID }}"             --data-urlencode "text=${{ github.event.inputs.message2 }}"
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage"             --data-urlencode "chat_id=${{ secrets.CHAT_ID }}"             --data-urlencode "text=${{ github.event.inputs.message3 }}"
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage"             --data-urlencode "chat_id=${{ secrets.CHAT_ID }}"             --data-urlencode "text=${{ github.event.inputs.message }}"
