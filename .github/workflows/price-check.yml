@@ -11,13 +11,15 @@ jobs:
     steps:
       - name: Check prices and alert
         run: |
-          pip install requests -q
+          pip install requests beautifulsoup4 -q
           python3 << 'PYEOF'
           import requests, re, os
+          from bs4 import BeautifulSoup
 
           THRESHOLD = 300
           BOT_TOKEN = os.environ['BOT_TOKEN']
           CHAT_ID = os.environ['CHAT_ID']
+          ASIN = 'B0842ZW5W7'
 
           HEADERS = {
               'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -33,48 +35,74 @@ jobs:
                   print(f"Fetch error {url}: {e}")
                   return ""
 
-          def extract_price(html, patterns):
-              for pattern in patterns:
-                  m = re.search(pattern, html)
+          def check_camelcamelcamel():
+              """Amazon price via camelcamelcamel - scraper friendly"""
+              url = f'https://camelcamelcamel.com/product/{ASIN}'
+              html = fetch(url)
+              # camelcamelcamel shows current Amazon price
+              patterns = [
+                  r'"amazon":\[\{"price":"(\d+\.?\d*)"',
+                  r'Current Amazon Price.*?\$(\d[\d,]*\.?\d*)',
+                  r'class="price"[^>]*>\$(\d[\d,]*\.?\d*)',
+                  r'amazon_price.*?\$(\d[\d,]*\.?\d*)',
+              ]
+              for p in patterns:
+                  m = re.search(p, html, re.DOTALL)
                   if m:
                       try:
                           return float(m.group(1).replace(',', ''))
                       except:
                           pass
+              # fallback: parse tables
+              soup = BeautifulSoup(html, 'html.parser')
+              for tag in soup.find_all(class_=re.compile('price')):
+                  text = tag.get_text()
+                  m = re.search(r'\$(\d[\d,]*\.\d{2})', text)
+                  if m:
+                      try:
+                          val = float(m.group(1).replace(',', ''))
+                          if 50 < val < 1000:  # sanity check
+                              return val
+                      except:
+                          pass
               return None
+
+          def check_google_shopping(query):
+              """Search Google Shopping for price"""
+              url = f'https://www.google.com/search?q={query}&tbm=shop'
+              html = fetch(url)
+              # Google Shopping embeds prices in JSON
+              patterns = [
+                  r'"price":"\$(\d[\d,]*\.?\d*)"',
+                  r'data-price="(\d+\.?\d*)"',
+                  r'class="a8Pemb OFFNJ"[^>]*>(\d[\d,]*\.?\d*)',
+              ]
+              prices = []
+              for p in patterns:
+                  for m in re.finditer(p, html):
+                      try:
+                          val = float(m.group(1).replace(',', ''))
+                          if 50 < val < 1000:
+                              prices.append(val)
+                      except:
+                          pass
+              return min(prices) if prices else None
 
           stores = [
               {
                   'name': 'Amazon',
-                  'url': 'https://www.amazon.com/dp/B0842ZW5W7',
-                  'link': 'https://www.amazon.com/dp/B0842ZW5W7',
-                  'patterns': [
-                      r'"priceAmount":(\d+\.?\d*)',
-                      r'"price":\{"value":(\d+\.?\d*)',
-                      r'class="a-offscreen">\$(\d[\d,]*\.?\d*)',
-                      r'id="priceblock_ourprice"[^>]*>\s*\$(\d[\d,]*\.?\d*)',
-                  ]
+                  'check': check_camelcamelcamel,
+                  'link': f'https://www.amazon.com/dp/{ASIN}',
               },
               {
                   'name': 'Walmart',
-                  'url': 'https://www.walmart.com/search?q=milwaukee+packout+48-22-8426',
+                  'check': lambda: check_google_shopping('milwaukee+packout+48-22-8426+site:walmart.com'),
                   'link': 'https://www.walmart.com/search?q=milwaukee+packout+48-22-8426',
-                  'patterns': [
-                      r'"currentPrice":\{"price":(\d+\.?\d*)',
-                      r'"price":(\d+\.?\d*),"currencyUnit":"USD"',
-                      r'"priceString":"\\\$(\d[\d,]*\.?\d*)"',
-                  ]
               },
               {
                   'name': 'Home Depot',
-                  'url': 'https://www.homedepot.com/s/milwaukee%20packout%2048-22-8426',
+                  'check': lambda: check_google_shopping('milwaukee+packout+48-22-8426+site:homedepot.com'),
                   'link': 'https://www.homedepot.com/s/milwaukee%20packout%2048-22-8426',
-                  'patterns': [
-                      r'"nowPrice":"\\\$(\d[\d,]*\.?\d*)"',
-                      r'"specialPrice":(\d+\.?\d*)',
-                      r'"currentPrice":(\d+\.?\d*)',
-                      r'\$(\d[\d,]*\.?\d*).*?Milwaukee.*?PACKOUT',
-                  ]
               },
           ]
 
@@ -82,14 +110,15 @@ jobs:
           summary = []
 
           for store in stores:
-              html = fetch(store['url'])
-              price = extract_price(html, store['patterns'])
+              price = store['check']()
               if price is not None:
                   summary.append(f"{store['name']}: ${price:.2f}")
                   if price < THRESHOLD:
                       alerts.append(f"\U0001f6a8 {store['name']}: ${price:.2f} — below ${THRESHOLD}!\n{store['link']}")
               else:
                   summary.append(f"{store['name']}: price unavailable")
+
+          print("\n".join(summary))
 
           if alerts:
               msg = "\U0001f514 Milwaukee PACKOUT Price Drop!\n\n"
@@ -101,9 +130,7 @@ jobs:
               )
               print("Alert sent via Telegram!")
           else:
-              print("No price drops today.")
-              for line in summary:
-                  print(line)
+              print("No price drops. No Telegram message sent.")
           PYEOF
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
