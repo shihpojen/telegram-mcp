@@ -1,0 +1,110 @@
+name: Milwaukee PACKOUT Price Checker
+
+on:
+  schedule:
+    - cron: '0 12 * * *'  # 5am PDT daily
+  workflow_dispatch:
+
+jobs:
+  check-price:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check prices and alert
+        run: |
+          pip install requests -q
+          python3 << 'PYEOF'
+          import requests, re, os
+
+          THRESHOLD = 300
+          BOT_TOKEN = os.environ['BOT_TOKEN']
+          CHAT_ID = os.environ['CHAT_ID']
+
+          HEADERS = {
+              'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept-Language': 'en-US,en;q=0.9',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          }
+
+          def fetch(url):
+              try:
+                  r = requests.get(url, headers=HEADERS, timeout=20)
+                  return r.text
+              except Exception as e:
+                  print(f"Fetch error {url}: {e}")
+                  return ""
+
+          def extract_price(html, patterns):
+              for pattern in patterns:
+                  m = re.search(pattern, html)
+                  if m:
+                      try:
+                          return float(m.group(1).replace(',', ''))
+                      except:
+                          pass
+              return None
+
+          stores = [
+              {
+                  'name': 'Amazon',
+                  'url': 'https://www.amazon.com/dp/B0842ZW5W7',
+                  'link': 'https://www.amazon.com/dp/B0842ZW5W7',
+                  'patterns': [
+                      r'"priceAmount":(\d+\.?\d*)',
+                      r'"price":\{"value":(\d+\.?\d*)',
+                      r'class="a-offscreen">\$(\d[\d,]*\.?\d*)',
+                      r'id="priceblock_ourprice"[^>]*>\s*\$(\d[\d,]*\.?\d*)',
+                  ]
+              },
+              {
+                  'name': 'Walmart',
+                  'url': 'https://www.walmart.com/search?q=milwaukee+packout+48-22-8426',
+                  'link': 'https://www.walmart.com/search?q=milwaukee+packout+48-22-8426',
+                  'patterns': [
+                      r'"currentPrice":\{"price":(\d+\.?\d*)',
+                      r'"price":(\d+\.?\d*),"currencyUnit":"USD"',
+                      r'"priceString":"\\\$(\d[\d,]*\.?\d*)"',
+                  ]
+              },
+              {
+                  'name': 'Home Depot',
+                  'url': 'https://www.homedepot.com/s/milwaukee%20packout%2048-22-8426',
+                  'link': 'https://www.homedepot.com/s/milwaukee%20packout%2048-22-8426',
+                  'patterns': [
+                      r'"nowPrice":"\\\$(\d[\d,]*\.?\d*)"',
+                      r'"specialPrice":(\d+\.?\d*)',
+                      r'"currentPrice":(\d+\.?\d*)',
+                      r'\$(\d[\d,]*\.?\d*).*?Milwaukee.*?PACKOUT',
+                  ]
+              },
+          ]
+
+          alerts = []
+          summary = []
+
+          for store in stores:
+              html = fetch(store['url'])
+              price = extract_price(html, store['patterns'])
+              if price is not None:
+                  summary.append(f"{store['name']}: ${price:.2f}")
+                  if price < THRESHOLD:
+                      alerts.append(f"\U0001f6a8 {store['name']}: ${price:.2f} — below ${THRESHOLD}!\n{store['link']}")
+              else:
+                  summary.append(f"{store['name']}: price unavailable")
+
+          if alerts:
+              msg = "\U0001f514 Milwaukee PACKOUT Price Drop!\n\n"
+              msg += "\n\n".join(alerts)
+              msg += "\n\n" + "\n".join(summary)
+              requests.post(
+                  f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                  data={"chat_id": CHAT_ID, "text": msg}
+              )
+              print("Alert sent via Telegram!")
+          else:
+              print("No price drops today.")
+              for line in summary:
+                  print(line)
+          PYEOF
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
